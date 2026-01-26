@@ -34,6 +34,11 @@ def main(
         cfg.get("DEFAULT_MODEL"),
         help="Large language model to use.",
     ),
+    deepseek: bool = typer.Option(
+        False,
+        "--deepseek",
+        help="Use DeepSeek API (deepseek-chat model).",
+    ),
     temperature: float = typer.Option(
         0.0,
         min=0.0,
@@ -199,6 +204,9 @@ def main(
 
     if editor:
         prompt = get_edited_prompt()
+
+    if deepseek:
+        model = "deepseek-chat"
 
     role_class = (
         DefaultRoles.check_get(shell, describe_shell, code)

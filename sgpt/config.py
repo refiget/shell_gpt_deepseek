@@ -37,6 +37,8 @@ DEFAULT_CONFIG = {
     "SHELL_INTERACTION": os.getenv("SHELL_INTERACTION ", "true"),
     "OS_NAME": os.getenv("OS_NAME", "auto"),
     "SHELL_NAME": os.getenv("SHELL_NAME", "auto"),
+    "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY", ""),
+    "DEEPSEEK_API_BASE_URL": os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com/v1"),
     # New features might add their own config variables here.
 }
 
