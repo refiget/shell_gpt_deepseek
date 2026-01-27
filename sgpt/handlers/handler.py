@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional
 
@@ -13,39 +12,24 @@ completion: Callable[..., Any] = lambda *args, **kwargs: Generator[Any, None, No
 
 base_url = cfg.get("API_BASE_URL")
 use_litellm = cfg.get("USE_LITELLM") == "true"
-
-
-def is_deepseek_model(model: str) -> bool:
-    """Check if the model is a DeepSeek model."""
-    return model.startswith("deepseek-")
-
-
-def get_api_config(model: str) -> Dict[str, Any]:
-    """Get API configuration based on model type."""
-    if is_deepseek_model(model):
-        api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        base_url = os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com/v1")
-        return {
-            "api_key": api_key,
-            "base_url": base_url,
-        }
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    base_url = base_url if base_url != "default" else None
-    return {
-        "api_key": api_key,
-        "base_url": base_url,
-    }
-
+additional_kwargs = {
+    "timeout": int(cfg.get("REQUEST_TIMEOUT")),
+    "api_key": cfg.get("OPENAI_API_KEY"),
+    "base_url": None if base_url == "default" else base_url,
+}
 
 if use_litellm:
     import litellm  # type: ignore
 
     completion = litellm.completion
     litellm.suppress_debug_info = True
+    additional_kwargs.pop("api_key")
 else:
     from openai import OpenAI
 
-    completion = None
+    client = OpenAI(**additional_kwargs)  # type: ignore
+    completion = client.chat.completions.create
+    additional_kwargs = {}
 
 
 class Handler:
@@ -106,6 +90,7 @@ class Handler:
         top_p: float,
         messages: List[Dict[str, Any]],
         functions: Optional[List[Dict[str, str]]],
+        caching: bool = True,
     ) -> Generator[str, None, None]:
         name = arguments = ""
         is_shell_role = self.role.name == DefaultRoles.SHELL.value
@@ -114,28 +99,61 @@ class Handler:
         if is_shell_role or is_code_role or is_dsc_shell_role:
             functions = None
 
-        api_config = get_api_config(model)
-        request_kwargs = {
-            "model": model,
-            "temperature": temperature,
-            "top_p": top_p,
-            "messages": messages,
-            "stream": True,
-            "timeout": self.timeout,
-        }
-        
-        if not use_litellm:
+        # Check if using DeepSeek model
+        is_deepseek_model = model.startswith("deepseek-")
+        if is_deepseek_model:
+            # Use DeepSeek API configuration
+            deepseek_api_key = cfg.get("DEEPSEEK_API_KEY")
+            deepseek_api_base = cfg.get("DEEPSEEK_API_BASE_URL")
+            if not deepseek_api_key:
+                raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek models")
+            
+            # Create a new OpenAI client for DeepSeek
             from openai import OpenAI
-            client = OpenAI(api_key=api_config["api_key"], base_url=api_config["base_url"])
-            response = client.chat.completions.create(**request_kwargs)
+            deepseek_client = OpenAI(
+                api_key=deepseek_api_key,
+                base_url=deepseek_api_base,
+                timeout=int(cfg.get("REQUEST_TIMEOUT")),
+            )
+            deepseek_completion = deepseek_client.chat.completions.create
+            
+            if functions:
+                deepseek_kwargs = {
+                    "tool_choice": "auto",
+                    "tools": functions,
+                    "parallel_tool_calls": False,
+                }
+                response = deepseek_completion(
+                    model=model,
+                    temperature=temperature,
+                    top_p=top_p,
+                    messages=messages,
+                    stream=True,
+                    **deepseek_kwargs,
+                )
+            else:
+                response = deepseek_completion(
+                    model=model,
+                    temperature=temperature,
+                    top_p=top_p,
+                    messages=messages,
+                    stream=True,
+                )
         else:
-            import litellm  # type: ignore
-            response = litellm.completion(**request_kwargs, api_key=api_config["api_key"], base_url=api_config["base_url"])
+            # Use default API configuration
+            if functions:
+                additional_kwargs["tool_choice"] = "auto"
+                additional_kwargs["tools"] = functions
+                additional_kwargs["parallel_tool_calls"] = False
 
-        if functions:
-            request_kwargs["tool_choice"] = "auto"
-            request_kwargs["tools"] = functions
-            request_kwargs["parallel_tool_calls"] = False
+            response = completion(
+                model=model,
+                temperature=temperature,
+                top_p=top_p,
+                messages=messages,
+                stream=True,
+                **additional_kwargs,
+            )
 
         try:
             for chunk in response:
@@ -165,8 +183,7 @@ class Handler:
 
                 yield delta.content or ""
         except KeyboardInterrupt:
-            if not use_litellm:
-                response.close()
+            response.close()
 
     def handle(
         self,

@@ -32,13 +32,13 @@ DEFAULT_CONFIG = {
     "OPENAI_USE_FUNCTIONS": os.getenv("OPENAI_USE_FUNCTIONS", "true"),
     "SHOW_FUNCTIONS_OUTPUT": os.getenv("SHOW_FUNCTIONS_OUTPUT", "false"),
     "API_BASE_URL": os.getenv("API_BASE_URL", "default"),
+    "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY"),
+    "DEEPSEEK_API_BASE_URL": os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com/v1"),
     "PRETTIFY_MARKDOWN": os.getenv("PRETTIFY_MARKDOWN", "true"),
     "USE_LITELLM": os.getenv("USE_LITELLM", "false"),
     "SHELL_INTERACTION": os.getenv("SHELL_INTERACTION ", "true"),
     "OS_NAME": os.getenv("OS_NAME", "auto"),
     "SHELL_NAME": os.getenv("SHELL_NAME", "auto"),
-    "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY", ""),
-    "DEEPSEEK_API_BASE_URL": os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com/v1"),
     # New features might add their own config variables here.
 }
 
@@ -70,11 +70,16 @@ class Config(dict):  # type: ignore
         return self.config_path.exists()
 
     def _write(self) -> None:
-        with open(self.config_path, "w", encoding="utf-8") as file:
-            string_config = ""
-            for key, value in self.items():
-                string_config += f"{key}={value}\n"
-            file.write(string_config)
+        try:
+            with open(self.config_path, "w", encoding="utf-8") as file:
+                string_config = ""
+                for key, value in self.items():
+                    string_config += f"{key}={value}\n"
+                file.write(string_config)
+        except PermissionError:
+            # If we can't write to the config file, just skip it
+            # This allows the program to run even if we don't have write permissions
+            pass
 
     def _read(self) -> None:
         with open(self.config_path, "r", encoding="utf-8") as file:
