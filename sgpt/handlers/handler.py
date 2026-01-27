@@ -41,6 +41,7 @@ class Handler:
         api_base_url = cfg.get("API_BASE_URL")
         self.base_url = None if api_base_url == "default" else api_base_url
         self.timeout = int(cfg.get("REQUEST_TIMEOUT"))
+        self.default_api = cfg.get("DEFAULT_API")
 
         self.markdown = "APPLY MARKDOWN" in self.role.role and markdown
         self.code_theme, self.color = cfg.get("CODE_THEME"), cfg.get("DEFAULT_COLOR")
@@ -99,14 +100,19 @@ class Handler:
         if is_shell_role or is_code_role or is_dsc_shell_role:
             functions = None
 
-        # Check if using DeepSeek model
+        # Check if using DeepSeek model or default API is deepseek
         is_deepseek_model = model.startswith("deepseek-")
-        if is_deepseek_model:
+        is_default_deepseek = hasattr(self, 'default_api') and self.default_api == "deepseek"
+        if is_deepseek_model or is_default_deepseek:
             # Use DeepSeek API configuration
             deepseek_api_key = cfg.get("DEEPSEEK_API_KEY")
             deepseek_api_base = cfg.get("DEEPSEEK_API_BASE_URL")
             if not deepseek_api_key:
                 raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek models")
+            
+            # Use deepseek-chat as default model for DeepSeek API
+            if not is_deepseek_model:
+                model = "deepseek-chat"
             
             # Create a new OpenAI client for DeepSeek
             from openai import OpenAI
