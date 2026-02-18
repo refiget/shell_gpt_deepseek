@@ -1,5 +1,4 @@
 import os
-from getpass import getpass
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
@@ -15,7 +14,7 @@ CHAT_CACHE_PATH = Path(gettempdir()) / "chat_cache"
 CACHE_PATH = Path(gettempdir()) / "cache"
 
 # TODO: Refactor ENV variables with SGPT_ prefix.
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict[str, Any] = {
     # TODO: Refactor it to CHAT_STORAGE_PATH.
     "CHAT_CACHE_PATH": os.getenv("CHAT_CACHE_PATH", str(CHAT_CACHE_PATH)),
     "CACHE_PATH": os.getenv("CACHE_PATH", str(CACHE_PATH)),
@@ -34,7 +33,9 @@ DEFAULT_CONFIG = {
     "SHOW_FUNCTIONS_OUTPUT": os.getenv("SHOW_FUNCTIONS_OUTPUT", "false"),
     "API_BASE_URL": os.getenv("API_BASE_URL", "default"),
     "DEEPSEEK_API_KEY": os.getenv("DEEPSEEK_API_KEY"),
-    "DEEPSEEK_API_BASE_URL": os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com/v1"),
+    "DEEPSEEK_API_BASE_URL": os.getenv(
+        "DEEPSEEK_API_BASE_URL", "https://api.deepseek.com/v1"
+    ),
     "PRETTIFY_MARKDOWN": os.getenv("PRETTIFY_MARKDOWN", "true"),
     "USE_LITELLM": os.getenv("USE_LITELLM", "false"),
     "SHELL_INTERACTION": os.getenv("SHELL_INTERACTION", "true"),
@@ -45,30 +46,35 @@ DEFAULT_CONFIG = {
 
 
 class Config(dict):  # type: ignore
-    def __init__(self, config_path: Path, **defaults: Any):
+    """Config reader/writer.
+
+    IMPORTANT: importing this project (tests, IDE, type-checkers) must not
+    create config files or prompt for keys.
+    """
+
+    def __init__(self, config_path: Path, *, create_if_missing: bool = False, **defaults: Any):
         self.config_path = config_path
 
+        # Start with defaults.
+        super().__init__(**defaults)
+
+        # Overlay config file if it exists.
         if self._exists:
             self._read()
-            has_new_config = False
-            for key, value in defaults.items():
-                if key not in self:
-                    has_new_config = True
-                    self[key] = value
-            if has_new_config:
-                self._write()
-        else:
-            # NOTE: Do not prompt for API keys at import-time. This class is used by
-            # both CLI runtime and library imports (tests, type-checking, etc.).
-            # If an API key is required, it should be validated only when that
-            # backend is actually used.
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            super().__init__(**defaults)
-            self._write()
+
+        # Optionally persist (CLI runtime can opt into this).
+        if create_if_missing and not self._exists:
+            self.ensure_created()
 
     @property
     def _exists(self) -> bool:
         return self.config_path.exists()
+
+    def ensure_created(self) -> None:
+        """Create parent dirs + write config file (if possible)."""
+
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self._write()
 
     def _write(self) -> None:
         try:
@@ -78,8 +84,7 @@ class Config(dict):  # type: ignore
                     string_config += f"{key}={value}\n"
                 file.write(string_config)
         except PermissionError:
-            # If we can't write to the config file, just skip it
-            # This allows the program to run even if we don't have write permissions
+            # If we can't write to the config file, just skip it.
             pass
 
     def _read(self) -> None:
@@ -104,10 +109,10 @@ class Config(dict):  # type: ignore
             raise UsageError(f"Missing config key: {key}")
         return value
 
-    # Back-compat: existing code uses cfg.get(...). Keep strict behavior, but
-    # route through get_required so callsites can migrate gradually.
+    # Back-compat: existing code uses cfg.get(...). Keep strict behavior.
     def get(self, key: str) -> str:  # type: ignore
         return self.get_required(key)
 
 
-cfg = Config(SHELL_GPT_CONFIG_PATH, **DEFAULT_CONFIG)
+# Global singleton (read-only by default; CLI can call cfg.ensure_created()).
+cfg = Config(SHELL_GPT_CONFIG_PATH, create_if_missing=False, **DEFAULT_CONFIG)
