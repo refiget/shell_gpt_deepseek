@@ -8,6 +8,8 @@ from ..function import get_function
 from ..printer import MarkdownPrinter, Printer, TextPrinter
 from ..role import DefaultRoles, SystemRole
 from ..backends.factory import build_completion_callable
+from ..backends.router import should_use_deepseek
+from ..backends.streaming import get_delta_tool_calls
 
 completion: Callable[..., Any]
 
@@ -137,12 +139,12 @@ class Handler:
         if is_shell_role or is_code_role or is_dsc_shell_role:
             functions = None
 
-        # Check if using DeepSeek model or default API is deepseek
-        is_deepseek_model = model.startswith("deepseek-")
         default_model = cfg.get_required("DEFAULT_MODEL")
-        is_default_deepseek = self.default_api == "deepseek" and model == default_model
-
-        if is_deepseek_model or is_default_deepseek:
+        if should_use_deepseek(
+            model=model,
+            default_api=self.default_api,
+            default_model=default_model,
+        ):
 
             # Initialize backend only if not already monkeypatched (tests patch
             # `completion` directly).
@@ -217,9 +219,7 @@ class Handler:
                 delta = chunk.choices[0].delta
 
                 # LiteLLM uses dict instead of Pydantic object like OpenAI does.
-                tool_calls = (
-                    delta.get("tool_calls") if self.use_litellm else delta.tool_calls
-                )
+                tool_calls = get_delta_tool_calls(delta, use_litellm=self.use_litellm)
                 if tool_calls:
                     for tool_call in tool_calls:
                         if tool_call.function.name:
