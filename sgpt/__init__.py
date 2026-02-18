@@ -1,2 +1,9 @@
-from .app import main as main
-from .app import entry_point as cli  # noqa: F401
+"""shell_gpt package.
+
+Keep this module free of import-time side effects.
+The CLI entry lives in :mod:`sgpt.cli`.
+"""
+
+from .__version__ import __version__
+
+__all__ = ["__version__"]

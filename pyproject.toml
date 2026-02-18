@@ -53,7 +53,7 @@ dev = [
 ]
 
 [project.scripts]
-sgpt = "sgpt:cli"
+sgpt = "sgpt.cli:entry_point"
 
 [project.urls]
 homepage = "https://github.com/ther1d/shell_gpt"

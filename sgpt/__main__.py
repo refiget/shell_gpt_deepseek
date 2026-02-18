@@ -1,3 +1,3 @@
-from .app import entry_point
+from sgpt.cli import entry_point
 
 entry_point()
