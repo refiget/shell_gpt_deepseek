@@ -8,43 +8,42 @@ from ..function import get_function
 from ..printer import MarkdownPrinter, Printer, TextPrinter
 from ..role import DefaultRoles, SystemRole
 
-completion: Callable[..., Any] = lambda *args, **kwargs: Generator[Any, None, None]
+completion: Callable[..., Any]
 
-base_url = cfg.get("API_BASE_URL")
-use_litellm = cfg.get("USE_LITELLM") == "true"
-additional_kwargs = {
-    "timeout": int(cfg.get("REQUEST_TIMEOUT")),
-    "api_key": cfg.get("OPENAI_API_KEY"),
-    "base_url": None if base_url == "default" else base_url,
-}
 
-if use_litellm:
-    import litellm  # type: ignore
+def _uninitialized_completion(*args: Any, **kwargs: Any) -> Any:
+    raise RuntimeError(
+        "LLM client not initialized. This is a bug: completion() was called "
+        "before backend initialization."
+    )
 
-    completion = litellm.completion
-    litellm.suppress_debug_info = True
-    additional_kwargs.pop("api_key")
-else:
-    from openai import OpenAI
 
-    client = OpenAI(**additional_kwargs)  # type: ignore
-    completion = client.chat.completions.create
-    additional_kwargs = {}
+# NOTE: Tests monkeypatch `sgpt.handlers.handler.completion`, so this name must
+# exist at import time, but it must not require any API keys at import time.
+completion = _uninitialized_completion
 
 
 class Handler:
-    cache = Cache(int(cfg.get("CACHE_LENGTH")), Path(cfg.get("CACHE_PATH")))
+    cache = Cache(
+        int(cfg.get_optional("CACHE_LENGTH", "100") or "100"),
+        Path(cfg.get_optional("CACHE_PATH", str(Path.home() / ".cache" / "sgpt"))
+        or str(Path.home() / ".cache" / "sgpt")),
+    )
 
     def __init__(self, role: SystemRole, markdown: bool) -> None:
         self.role = role
 
-        api_base_url = cfg.get("API_BASE_URL")
+        api_base_url = cfg.get_required("API_BASE_URL")
         self.base_url = None if api_base_url == "default" else api_base_url
-        self.timeout = int(cfg.get("REQUEST_TIMEOUT"))
-        self.default_api = cfg.get("DEFAULT_API")
+        self.timeout = int(cfg.get_required("REQUEST_TIMEOUT"))
+        self.default_api = cfg.get_required("DEFAULT_API")
+        self.use_litellm = cfg.get_required("USE_LITELLM") == "true"
 
         self.markdown = "APPLY MARKDOWN" in self.role.role and markdown
-        self.code_theme, self.color = cfg.get("CODE_THEME"), cfg.get("DEFAULT_COLOR")
+        self.code_theme, self.color = (
+            cfg.get_required("CODE_THEME"),
+            cfg.get_required("DEFAULT_COLOR"),
+        )
 
     @property
     def printer(self) -> Printer:
@@ -128,6 +127,8 @@ class Handler:
         functions: Optional[List[Dict[str, str]]],
         caching: bool = True,
     ) -> Generator[str, None, None]:
+        global completion
+
         name = arguments = ""
         is_shell_role = self.role.name == DefaultRoles.SHELL.value
         is_code_role = self.role.name == DefaultRoles.CODE.value
@@ -137,56 +138,37 @@ class Handler:
 
         # Check if using DeepSeek model or default API is deepseek
         is_deepseek_model = model.startswith("deepseek-")
-        is_default_deepseek = hasattr(self, 'default_api') and self.default_api == "deepseek"
+        default_model = cfg.get_required("DEFAULT_MODEL")
+        is_default_deepseek = self.default_api == "deepseek" and model == default_model
+
         if is_deepseek_model or is_default_deepseek:
-            # Use DeepSeek API configuration
-            deepseek_api_key = cfg.get("DEEPSEEK_API_KEY")
-            deepseek_api_base = cfg.get("DEEPSEEK_API_BASE_URL")
-            if not deepseek_api_key:
-                raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek models")
-            
-            # Always use deepseek-chat as default model for DeepSeek API
-            # This ensures we use DeepSeek API even if a non-DeepSeek model name is provided
-            if not is_deepseek_model:
-                model = "deepseek-chat"
-            
-            # Create a new OpenAI client for DeepSeek
-            from openai import OpenAI
-            deepseek_client = OpenAI(
-                api_key=deepseek_api_key,
-                base_url=deepseek_api_base,
-                timeout=int(cfg.get("REQUEST_TIMEOUT")),
-            )
-            deepseek_completion = deepseek_client.chat.completions.create
-            
+
+            # Initialize backend only if not already monkeypatched (tests patch
+            # `completion` directly).
+            if completion is _uninitialized_completion:
+                deepseek_api_key = cfg.get_optional("DEEPSEEK_API_KEY")
+                deepseek_api_base = cfg.get_required("DEEPSEEK_API_BASE_URL")
+                if not deepseek_api_key:
+                    raise ValueError(
+                        "DEEPSEEK_API_KEY is required when using DeepSeek API"
+                    )
+
+                from openai import OpenAI
+
+                deepseek_client = OpenAI(
+                    api_key=deepseek_api_key,
+                    base_url=deepseek_api_base,
+                    timeout=self.timeout,
+                )
+                completion = deepseek_client.chat.completions.create
+
+            deepseek_kwargs: dict[str, Any] = {}
             if functions:
                 deepseek_kwargs = {
                     "tool_choice": "auto",
                     "tools": functions,
                     "parallel_tool_calls": False,
                 }
-                response = deepseek_completion(
-                    model=model,
-                    temperature=temperature,
-                    top_p=top_p,
-                    messages=messages,
-                    stream=True,
-                    **deepseek_kwargs,
-                )
-            else:
-                response = deepseek_completion(
-                    model=model,
-                    temperature=temperature,
-                    top_p=top_p,
-                    messages=messages,
-                    stream=True,
-                )
-        else:
-            # Use default API configuration
-            if functions:
-                additional_kwargs["tool_choice"] = "auto"
-                additional_kwargs["tools"] = functions
-                additional_kwargs["parallel_tool_calls"] = False
 
             response = completion(
                 model=model,
@@ -194,7 +176,52 @@ class Handler:
                 top_p=top_p,
                 messages=messages,
                 stream=True,
-                **additional_kwargs,
+                **deepseek_kwargs,
+            )
+        else:
+            # Default API (OpenAI or LiteLLM)
+
+            if completion is _uninitialized_completion:
+                if self.use_litellm:
+                    import litellm  # type: ignore
+
+                    litellm.suppress_debug_info = True
+                    completion = litellm.completion
+                else:
+                    from openai import OpenAI
+
+                    openai_api_key = cfg.get_optional("OPENAI_API_KEY")
+                    if not openai_api_key:
+                        raise ValueError(
+                            "OPENAI_API_KEY is required when using OpenAI backend"
+                        )
+
+                    openai_kwargs: dict[str, Any] = {
+                        "api_key": openai_api_key,
+                        "timeout": self.timeout,
+                    }
+                    # Support custom base_url for OpenAI-compatible providers.
+                    if self.base_url is not None:
+                        openai_kwargs["base_url"] = self.base_url
+
+                    client = OpenAI(**openai_kwargs)
+                    completion = client.chat.completions.create
+
+            call_kwargs: dict[str, Any] = {}
+            if functions:
+                call_kwargs = {
+                    "tool_choice": "auto",
+                    "tools": functions,
+                    "parallel_tool_calls": False,
+                }
+
+            response = completion(
+                model=model,
+                temperature=temperature,
+                top_p=top_p,
+                messages=messages,
+                stream=True,
+                **call_kwargs,
             )
 
         try:
@@ -203,7 +230,7 @@ class Handler:
 
                 # LiteLLM uses dict instead of Pydantic object like OpenAI does.
                 tool_calls = (
-                    delta.get("tool_calls") if use_litellm else delta.tool_calls
+                    delta.get("tool_calls") if self.use_litellm else delta.tool_calls
                 )
                 if tool_calls:
                     for tool_call in tool_calls:
@@ -237,7 +264,7 @@ class Handler:
         functions: Optional[List[Dict[str, str]]] = None,
         **kwargs: Any,
     ) -> str:
-        disable_stream = cfg.get("DISABLE_STREAMING") == "true"
+        disable_stream = cfg.get_required("DISABLE_STREAMING") == "true"
         messages = self.make_messages(prompt.strip())
         generator = self.get_completion(
             model=model,
