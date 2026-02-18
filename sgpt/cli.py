@@ -158,6 +158,9 @@ def main(
 ) -> None:
     stdin_passed = not sys.stdin.isatty()
 
+    # Create config file on first CLI run (best-effort).
+    cfg.ensure_created()
+
     if stdin_passed:
         stdin = ""
         for line in sys.stdin:
