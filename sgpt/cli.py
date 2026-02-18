@@ -242,6 +242,12 @@ def main(
 
     session: PromptSession[str] = PromptSession()
 
+    # If --shell is used with --no-interaction, optionally auto-execute.
+    if shell and not interaction:
+        if cfg.get_required("DEFAULT_EXECUTE_SHELL_CMD") == "true":
+            run_command(full_completion)
+        return
+
     while shell and interaction:
         option = typer.prompt(
             text="[E]xecute, [M]odify, [D]escribe, [A]bort",
