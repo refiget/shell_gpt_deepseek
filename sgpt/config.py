@@ -37,7 +37,7 @@ DEFAULT_CONFIG = {
     "DEEPSEEK_API_BASE_URL": os.getenv("DEEPSEEK_API_BASE_URL", "https://api.deepseek.com/v1"),
     "PRETTIFY_MARKDOWN": os.getenv("PRETTIFY_MARKDOWN", "true"),
     "USE_LITELLM": os.getenv("USE_LITELLM", "false"),
-    "SHELL_INTERACTION": os.getenv("SHELL_INTERACTION ", "true"),
+    "SHELL_INTERACTION": os.getenv("SHELL_INTERACTION", "true"),
     "OS_NAME": os.getenv("OS_NAME", "auto"),
     "SHELL_NAME": os.getenv("SHELL_NAME", "auto"),
     # New features might add their own config variables here.
@@ -58,11 +58,11 @@ class Config(dict):  # type: ignore
             if has_new_config:
                 self._write()
         else:
+            # NOTE: Do not prompt for API keys at import-time. This class is used by
+            # both CLI runtime and library imports (tests, type-checking, etc.).
+            # If an API key is required, it should be validated only when that
+            # backend is actually used.
             config_path.parent.mkdir(parents=True, exist_ok=True)
-            # Don't write API key to config file if it is in the environment.
-            if not defaults.get("OPENAI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
-                __api_key = getpass(prompt="Please enter your OpenAI API key: ")
-                defaults["OPENAI_API_KEY"] = __api_key
             super().__init__(**defaults)
             self._write()
 
@@ -89,12 +89,25 @@ class Config(dict):  # type: ignore
                     key, value = line.strip().split("=", 1)
                     self[key] = value
 
-    def get(self, key: str) -> str:  # type: ignore
-        # Prioritize environment variables over config file.
+    def get_optional(self, key: str, default: str | None = None) -> str | None:
+        """Return config value or default (never raises).
+
+        Environment variables override config-file values.
+        """
+
         value = os.getenv(key) or super().get(key)
-        if not value:
+        return value if value not in (None, "") else default
+
+    def get_required(self, key: str) -> str:
+        value = self.get_optional(key)
+        if value is None:
             raise UsageError(f"Missing config key: {key}")
         return value
+
+    # Back-compat: existing code uses cfg.get(...). Keep strict behavior, but
+    # route through get_required so callsites can migrate gradually.
+    def get(self, key: str) -> str:  # type: ignore
+        return self.get_required(key)
 
 
 cfg = Config(SHELL_GPT_CONFIG_PATH, **DEFAULT_CONFIG)
