@@ -10,6 +10,7 @@ from ..role import DefaultRoles, SystemRole
 from ..backends.factory import build_completion_callable
 from ..backends.router import should_use_deepseek
 from ..backends.streaming import get_delta_tool_calls
+from ..backends.tools import make_assistant_tool_request_message, make_tool_result_message
 
 completion: Callable[..., Any]
 
@@ -65,38 +66,18 @@ class Handler:
         name: str,
         arguments: str,
     ) -> Generator[str, None, None]:
-        # Generate a tool_call_id for DeepSeek API
         import uuid
+
         tool_call_id = str(uuid.uuid4())
 
-        # Determine the API type
-        is_deepseek = hasattr(self, 'default_api') and self.default_api == "deepseek"
-
-        # Create the appropriate message based on API type
-        if is_deepseek:
-            # For DeepSeek API, use tool_calls
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [
-                        {
-                            "id": tool_call_id,
-                            "type": "function",
-                            "function": {"name": name, "arguments": arguments}
-                        }
-                    ]
-                }
+        messages.append(
+            make_assistant_tool_request_message(
+                default_api=self.default_api,
+                tool_call_id=tool_call_id,
+                name=name,
+                arguments=arguments,
             )
-        else:
-            # For OpenAI API, use function_call
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": "",
-                    "function_call": {"name": name, "arguments": arguments}
-                }
-            )
+        )
 
         if messages and messages[-1]["role"] == "assistant":
             yield "\n"
@@ -109,16 +90,14 @@ class Handler:
         if cfg.get("SHOW_FUNCTIONS_OUTPUT") == "true":
             yield f"```text\n{result}\n```\n"
 
-        # Determine the role type based on the API being used
-        # DeepSeek API uses "tool" instead of "function"
-        is_deepseek = hasattr(self, 'default_api') and self.default_api == "deepseek"
-        role_type = "tool" if is_deepseek else "function"
-
-        # Create the message with appropriate fields based on role type
-        if is_deepseek:
-            messages.append({"role": role_type, "content": result, "tool_call_id": tool_call_id, "name": name})
-        else:
-            messages.append({"role": role_type, "content": result, "name": name})
+        messages.append(
+            make_tool_result_message(
+                default_api=self.default_api,
+                tool_call_id=tool_call_id,
+                name=name,
+                result=result,
+            )
+        )
 
     @cache
     def get_completion(
