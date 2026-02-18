@@ -194,13 +194,6 @@ docker run --rm \
 3. **新增配置项**：添加了 `DEEPSEEK_API_KEY` 和 `DEEPSEEK_API_BASE_URL` 配置
 4. **自动模型选择**：当使用 DeepSeek API 时，自动选择合适的 DeepSeek 模型
 
-## 贡献指南
-
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'feat: Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 打开 Pull Request
 
 ## 许可证
 
