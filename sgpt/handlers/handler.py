@@ -7,6 +7,7 @@ from ..config import cfg
 from ..function import get_function
 from ..printer import MarkdownPrinter, Printer, TextPrinter
 from ..role import DefaultRoles, SystemRole
+from ..backends.factory import build_completion_callable
 
 completion: Callable[..., Any]
 
@@ -153,14 +154,12 @@ class Handler:
                         "DEEPSEEK_API_KEY is required when using DeepSeek API"
                     )
 
-                from openai import OpenAI
-
-                deepseek_client = OpenAI(
+                completion = build_completion_callable(
+                    provider="deepseek",
                     api_key=deepseek_api_key,
                     base_url=deepseek_api_base,
                     timeout=self.timeout,
                 )
-                completion = deepseek_client.chat.completions.create
 
             deepseek_kwargs: dict[str, Any] = {}
             if functions:
@@ -182,30 +181,19 @@ class Handler:
             # Default API (OpenAI or LiteLLM)
 
             if completion is _uninitialized_completion:
-                if self.use_litellm:
-                    import litellm  # type: ignore
+                openai_api_key = cfg.get_optional("OPENAI_API_KEY")
+                if not self.use_litellm and not openai_api_key:
+                    raise ValueError(
+                        "OPENAI_API_KEY is required when using OpenAI backend"
+                    )
 
-                    litellm.suppress_debug_info = True
-                    completion = litellm.completion
-                else:
-                    from openai import OpenAI
-
-                    openai_api_key = cfg.get_optional("OPENAI_API_KEY")
-                    if not openai_api_key:
-                        raise ValueError(
-                            "OPENAI_API_KEY is required when using OpenAI backend"
-                        )
-
-                    openai_kwargs: dict[str, Any] = {
-                        "api_key": openai_api_key,
-                        "timeout": self.timeout,
-                    }
-                    # Support custom base_url for OpenAI-compatible providers.
-                    if self.base_url is not None:
-                        openai_kwargs["base_url"] = self.base_url
-
-                    client = OpenAI(**openai_kwargs)
-                    completion = client.chat.completions.create
+                completion = build_completion_callable(
+                    provider="openai",
+                    api_key=openai_api_key or "",
+                    base_url=self.base_url,
+                    timeout=self.timeout,
+                    use_litellm=self.use_litellm,
+                )
 
             call_kwargs: dict[str, Any] = {}
             if functions:
