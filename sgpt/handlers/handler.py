@@ -66,10 +66,10 @@ class Handler:
         # Generate a tool_call_id for DeepSeek API
         import uuid
         tool_call_id = str(uuid.uuid4())
-        
+
         # Determine the API type
         is_deepseek = hasattr(self, 'default_api') and self.default_api == "deepseek"
-        
+
         # Create the appropriate message based on API type
         if is_deepseek:
             # For DeepSeek API, use tool_calls
@@ -106,12 +106,12 @@ class Handler:
         result = get_function(name)(**dict_args)
         if cfg.get("SHOW_FUNCTIONS_OUTPUT") == "true":
             yield f"```text\n{result}\n```\n"
-        
+
         # Determine the role type based on the API being used
         # DeepSeek API uses "tool" instead of "function"
         is_deepseek = hasattr(self, 'default_api') and self.default_api == "deepseek"
         role_type = "tool" if is_deepseek else "function"
-        
+
         # Create the message with appropriate fields based on role type
         if is_deepseek:
             messages.append({"role": role_type, "content": result, "tool_call_id": tool_call_id, "name": name})
